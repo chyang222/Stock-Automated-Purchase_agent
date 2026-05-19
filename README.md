@@ -1,50 +1,56 @@
-# Stock Auto Trading Agent
+# 1. 의존성 설치
+pip install anthropic python-dotenv requests pandas scikit-learn joblib
 
-이 저장소는 한국 주식 데이터를 수집하고, 특성(feature) 기반 예측과 AWS Bedrock 기반 의사결정 보조를 연결하는 자동매매 에이전트 초기 구조입니다.
+# 2. 환경변수 설정
+cp .env.example .env
+# .env 파일에 실제 키 값 입력
 
-## 주요 구조
-- `collector/`: KIS API로 분봉 데이터를 수집
-- `features/`: 기술적 지표를 계산하는 feature 엔지니어링
-- `models/`: 학습 및 예측
-- `bedrock_client.py`: Bedrock 모델 호출 인터페이스
-- `broker_client.py`: 주문 기록 및 모의주문 스텁
-- `trade_agent.py`: 전체 파이프라인 제어
-- `app.py`: CLI 진입점
-
-## 사용법
-### 1) 데이터 수집
-```bash
+# 3. 데이터 수집 → 피처 생성 → 모델 학습 (선택사항)
 python app.py collect
-```
-
-### 2) 특징 생성
-```bash
 python app.py features
-```
-
-### 3) 모델 학습
-```bash
 python app.py train
-```
 
-### 4) 예측
-```bash
-python app.py predict
-```
+# 4. 에이전트 실행 (DRY_RUN=true로 시작 권장)
+python app.py agent
 
-### 5) Bedrock 보조 자동매매 실행 (모의)
-```bash
-python app.py agent --dry-run
-```
 
-## 환경 변수
-- `WATCH_LIST`: 콤마 구분 종목 코드 목록, 기본값: `005930,000660,035420,051910,207940`
-- `TRADE_QUANTITY`: 모의 주문 수량, 기본값: `1`
-- `AWS_DEFAULT_REGION`: Bedrock 리전, 기본값: `ap-northeast-2`
-- `BEDROCK_MODEL_ID`: 사용할 Bedrock 모델 ID
-- `BROKER_ORDER_LOG`: 주문 로그 파일 경로
+#---------------------------------------------------------------------
 
-## 주의사항
-- `bedrock_client.py`는 `boto3`가 설치되어 있어야 합니다.
-- 실제 주문 연동 시 `broker_client.py`를 증권사 API에 맞게 수정하세요.
-- 실거래 전에는 충분한 백테스트와 시뮬레이션을 권장합니다.
+# 1. 해당 종목만 분봉 수집
+python app.py collect --symbols 203650
+
+# 2. 피처 재생성 (전체 종목 대상이지만 203650 데이터도 포함됨)
+python app.py features
+
+# 3. 모델 재학습
+python app.py train
+
+# 4. 해당 종목만 에이전트 실행
+python app.py agent --symbols 203650
+--symbols 플래그를 쓰면 .env의 WATCH_LIST를 무시하고 지정한 종목만 처리합니다.
+
+한 번에 붙여서 실행하려면:
+
+
+python app.py collect --symbols 203650 && \
+python app.py features && \
+python app.py train && \
+python app.py agent --symbols 203650
+
+
+#--------------------------------------------------------------------------
+python app.py agent --symbols 203650 --budget 30000
+
+#--------------------------------------------------------------------------
+python app.py recommend
+
+
+#--------------------------------------------------------------------------
+# 예산 없이 계좌 잔고 전액 기준으로 30분마다 자동매매
+python app.py loop
+
+# 예산 3만원으로 30분마다 자동매매
+python app.py loop --budget 30000
+
+# 10분마다 더 자주 실행
+LOOP_INTERVAL_MIN=10 python app.py loop --budget 30000
