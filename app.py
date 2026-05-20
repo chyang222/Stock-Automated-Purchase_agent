@@ -4,9 +4,11 @@
   python app.py agent                    # 에이전트 1회 실행
   python app.py loop                     # 장중 자동매매 루프 (계속 반복)
   python app.py loop --budget 30000      # 예산 3만원으로 루프
-  python app.py collect                  # 분봉 데이터 수집
-  python app.py features                 # 피처 생성
-  python app.py train                    # ML 모델 학습
+  python app.py collect                  # 1분봉 데이터 수집 (최대 7일)
+  python app.py collect-all              # 코스피 상위 300개 5분봉 60일 일괄 수집
+  python app.py features                 # 피처 생성 (RandomForest용)
+  python app.py train                    # RandomForest 모델 학습
+  python app.py train-patchtst           # PatchTST 모델 학습 (collect-all 선행 필요)
   python app.py recommend                # KOSPI 추천 종목 분석
 """
 
@@ -19,7 +21,7 @@ def main():
     parser = argparse.ArgumentParser(description="주식 자동매매 에이전트")
     parser.add_argument(
         "command",
-        choices=["agent", "loop", "collect", "features", "train", "recommend"],
+        choices=["agent", "loop", "collect", "collect-all", "features", "train", "train-patchtst", "recommend"],
         help="실행할 명령",
     )
     parser.add_argument("--symbols", type=str, help="콤마 구분 종목 코드 (예: 005930,000660)")
@@ -62,10 +64,34 @@ def main():
     elif args.command == "loop":
         from agent import trading_loop
 
-        interval = int(os.environ.get("LOOP_INTERVAL_MIN", "3"))
+        interval = int(os.environ.get("LOOP_INTERVAL_MIN", "6"))
         screen_every = int(os.environ.get("SCREEN_EVERY_N", "4"))
         print(f"자동매매 루프 시작 (간격: {interval}분, KOSPI 재스크리닝: {screen_every}회마다)")
         trading_loop(budget=args.budget, interval_min=interval, screen_every_n=screen_every)
+
+    elif args.command == "collect-all":
+        from collector.collect_all import collect_all_kospi
+
+        top_n      = int(os.environ.get("COLLECT_TOP_N", "300"))
+        days       = int(os.environ.get("COLLECT_DAYS_5M", "60"))
+        skip       = os.environ.get("COLLECT_NO_SKIP", "").lower() not in ("1", "true")
+        collect_all_kospi(top_n=top_n, days=days, skip_existing=skip)
+
+    elif args.command == "train-patchtst":
+        from models.patchtst_model import train_patchtst
+        from config.settings import MINUTE5_DIR, ARTIFACT_DIR
+
+        epochs     = int(os.environ.get("PATCHTST_EPOCHS", "30"))
+        batch_size = int(os.environ.get("PATCHTST_BATCH", "256"))
+        max_files  = os.environ.get("PATCHTST_MAX_FILES")
+        print(f"PatchTST 학습 시작 (epochs={epochs}, batch={batch_size})")
+        train_patchtst(
+            data_dir=MINUTE5_DIR,
+            artifact_dir=ARTIFACT_DIR,
+            epochs=epochs,
+            batch_size=batch_size,
+            max_files=int(max_files) if max_files else None,
+        )
 
     elif args.command == "recommend":
         from collector.recommender import get_recommendations

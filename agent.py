@@ -34,6 +34,11 @@ from collector.kis_client import KisClient
 _client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 _kis: KisClient | None = None
 
+# KIS 온라인 수수료 (코스피 기준)
+BUY_FEE_RATE  = 0.00015   # 매수 수수료 0.015%
+SELL_FEE_RATE = 0.00195   # 매도 수수료 0.015% + 증권거래세 0.18%
+ROUND_TRIP_COST = BUY_FEE_RATE + SELL_FEE_RATE  # 왕복 약 0.21%
+
 
 def _get_kis() -> KisClient:
     global _kis
@@ -113,59 +118,61 @@ def tool_get_technical_indicators(stock_code: str) -> dict:
 
 def tool_get_ml_prediction(stock_code: str) -> dict:
     try:
-        import joblib
+        # ── 1순위: PatchTST (5분봉 60일 데이터 기반)
+        from models.patchtst_model import predict as patchtst_predict, PATCHTST_PATH, MINUTE5_DIR
+        if PATCHTST_PATH.exists():
+            result = patchtst_predict(stock_code, data_dir=MINUTE5_DIR)
+            if result.get("up_probability") is not None:
+                return result
 
+        # ── 2순위: RandomForest fallback (1분봉 또는 FDR 일봉)
+        import joblib
         model_path = ARTIFACT_DIR / "stock_updown_random_forest.joblib"
         if not model_path.exists():
             return {
                 "stock_code": stock_code,
                 "up_probability": None,
-                "note": "ML 모델 미학습 — 먼저 python app.py train 실행 필요",
+                "note": "ML 모델 없음 — python app.py train 또는 train-patchtst 실행 필요",
             }
 
         df = _load_minute_df(stock_code)
         if df is None or len(df) < 60:
-            # 로컬 파일 없으면 FinanceDataReader로 일봉 즉시 수집
             try:
                 import FinanceDataReader as fdr
                 from datetime import timedelta
                 start = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
-                end = datetime.now().strftime("%Y-%m-%d")
-                fdr_df = fdr.DataReader(stock_code, start, end)
+                fdr_df = fdr.DataReader(stock_code, start, datetime.now().strftime("%Y-%m-%d"))
                 if fdr_df.empty or len(fdr_df) < 60:
-                    return {"stock_code": stock_code, "up_probability": None, "note": f"데이터 부족 ({len(fdr_df) if not fdr_df.empty else 0}일)"}
-                fdr_df = fdr_df.reset_index().rename(columns={
+                    return {"stock_code": stock_code, "up_probability": None, "note": f"데이터 부족"}
+                df = fdr_df.reset_index().rename(columns={
                     "Date": "date", "Open": "open", "High": "high",
                     "Low": "low", "Close": "close", "Volume": "volume",
                 })
-                df = fdr_df
             except Exception as fe:
                 return {"stock_code": stock_code, "up_probability": None, "note": f"데이터 수집 실패: {fe}"}
 
-        close = df["close"].astype(float)
+        close  = df["close"].astype(float)
         volume = df.get("volume", pd.Series(dtype=float)).astype(float)
-
-        feat = {
+        feat   = {
             "open": float(df["open"].iloc[-1]),
             "high": float(df["high"].iloc[-1]),
-            "low": float(df["low"].iloc[-1]),
+            "low":  float(df["low"].iloc[-1]),
             "close": float(close.iloc[-1]),
             "volume": float(volume.iloc[-1]) if not volume.empty else 0,
             "return_1d": float(close.pct_change().iloc[-1]),
             "return_5d": float(close.pct_change(5).iloc[-1]),
-            "ma5": float(close.rolling(5).mean().iloc[-1]),
+            "ma5":  float(close.rolling(5).mean().iloc[-1]),
             "ma20": float(close.rolling(20).mean().iloc[-1]),
             "ma60": float(close.rolling(60).mean().iloc[-1]),
             "volatility_20": float(close.pct_change().rolling(20).std().iloc[-1]),
             "rsi14": _calc_rsi(close),
         }
-        X = pd.DataFrame([feat])
-        model = joblib.load(model_path)
-        prob = float(model.predict_proba(X)[:, 1][0])
+        prob = float(joblib.load(model_path).predict_proba(pd.DataFrame([feat]))[:, 1][0])
         return {
             "stock_code": stock_code,
             "up_probability": round(prob, 4),
             "signal": "UP" if prob > 0.55 else "DOWN" if prob < 0.45 else "NEUTRAL",
+            "model": "RandomForest",
         }
     except Exception as e:
         return {"error": str(e), "stock_code": stock_code}
@@ -410,6 +417,15 @@ def _build_system_prompt(budget: int | None) -> str:
    b. search_news_sentiment → 헤드라인 읽고 감성 판단
    c. 매수 조건 충족 시 place_order(action="BUY")
 
+## 수수료 구조 (반드시 고려)
+- 매수 수수료: 0.015% → 100만원 매수 시 약 150원
+- 매도 수수료 + 증권거래세: 0.195% → 100만원 매도 시 약 1,950원
+- **왕복 총 비용: 약 0.21%** (매수가 기준)
+- 손익분기: 매수 후 최소 +0.21% 이상 올라야 본전
+- 매수 시: 수수료 포함 총 비용 = 현재가 × 수량 × 1.00015
+- 매도 시: 실수령액 = 현재가 × 수량 × (1 − 0.00195)
+- 수익률 계산 시 항상 수수료를 차감한 **실질 수익률**로 판단할 것
+
 ## 감성 분석 반영 규칙
 - **긍정(positive)**: 다른 매수 조건 충족 시 적극 매수. 보유 중이면 유지.
 - **부정(negative)**: ML이 0.48 이상이어도 신규 매수 보류. 보유 중이면 손실률 무관하게 매도 우선 검토.
@@ -419,18 +435,21 @@ def _build_system_prompt(budget: int | None) -> str:
 ## 매도 조건 — 보유 종목에서 하나라도 해당하면 즉시 매도
 - ML 상승 확률 < 0.45 (하락 신호)
 - RSI14 > 75 (과매수, 고점 가능성)
-- 손실률 ≤ -7% (손절)
-- 수익률 ≥ +8% (익절)
+- 실질 손실률 ≤ -7% (수수료 포함 손절)
+- 실질 수익률 ≥ +1.0% (수수료 0.21% 차감 후 순수익 +0.79% 이상, 익절)
+- 뉴스 감성 부정 + 실질 수익률 > 0% → 즉시 익절
 
-## 매수 조건 — 아래 조건을 최대한 충족하는 종목 매수 (테스트 기간: 조건 완화)
-- ML 상승 확률 ≥ 0.48 (NEUTRAL 포함 허용)
-- RSI14 < 75 (극과매수만 제외)
-- 예산(또는 잔고) ≥ 현재가 × 주문수량
+## 매수 조건 — 아래 조건을 모두 충족하는 종목만 매수
+- ML 상승 확률 ≥ 0.48
+- RSI14 < 75
+- 예산(또는 잔고) ≥ 현재가 × 수량 × 1.00015 (수수료 포함 총 비용)
+- 뉴스 감성 긍정 또는 중립 (부정이면 매수 보류)
 - 위 조건을 모두 만족하는 종목 중 ML 확률이 가장 높은 종목 우선 매수
 
 ## 주의사항
 - 종목당 최대 {TRADE_QUANTITY}주 (예산 내 최적 수량 자동 계산)
-- 조건 충족 종목이 있으면 적극적으로 매수 실행 (테스트 기간이므로 소극적 보류 지양)
+- 수수료를 감안하면 최소 +0.21% 이상 상승 기대 종목만 매수할 것
+- 소액 수익(+0.21% 미만)에서 매도하면 수수료로 손해 — 매도 보류
 - DRY_RUN={DRY_RUN}: {'시뮬레이션만 실행, 실제 주문 없음' if DRY_RUN else '실제 주문 실행됩니다!'}
 - 분석 근거와 최종 판단을 명확히 설명하세요
 """

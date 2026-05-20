@@ -40,13 +40,14 @@ KIS_BASE_URL = (
 
 # Paths
 DATA_DIR = BASE_DIR / "data"
-MINUTE_DIR = DATA_DIR / "minute"
+MINUTE_DIR  = DATA_DIR / "minute"    # 1분봉 (yfinance, 최대 7일)
+MINUTE5_DIR = DATA_DIR / "minute5"   # 5분봉 (yfinance, 최대 60일) — PatchTST용
 RAW_DIR = DATA_DIR / "raw"
 PROCESSED_DIR = DATA_DIR / "processed"
 ARTIFACT_DIR = DATA_DIR / "artifacts"
 ORDER_LOG = ARTIFACT_DIR / "orders.log"
 
-for _d in (MINUTE_DIR, RAW_DIR, PROCESSED_DIR, ARTIFACT_DIR):
+for _d in (MINUTE_DIR, MINUTE5_DIR, RAW_DIR, PROCESSED_DIR, ARTIFACT_DIR):
     _d.mkdir(parents=True, exist_ok=True)
 
 # Trading
