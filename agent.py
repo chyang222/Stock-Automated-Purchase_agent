@@ -73,8 +73,20 @@ def tool_get_technical_indicators(stock_code: str) -> dict:
     try:
         df = _load_minute_df(stock_code)
         if df is None or len(df) < 20:
-            # 분봉 데이터 부족 시 API에서 직접 가져옴
-            df = _get_kis().get_today_minute_price(stock_code)
+            # 로컬 파일 없으면 FinanceDataReader 일봉으로 폴백
+            try:
+                import FinanceDataReader as fdr
+                from datetime import timedelta
+                start = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
+                fdr_df = fdr.DataReader(stock_code, start, datetime.now().strftime("%Y-%m-%d"))
+                if not fdr_df.empty:
+                    fdr_df = fdr_df.reset_index().rename(columns={
+                        "Date": "date", "Open": "open", "High": "high",
+                        "Low": "low", "Close": "close", "Volume": "volume",
+                    })
+                    df = fdr_df
+            except Exception:
+                pass
         if df is None or len(df) < 5:
             return {"error": "데이터 부족", "stock_code": stock_code}
 
@@ -113,7 +125,22 @@ def tool_get_ml_prediction(stock_code: str) -> dict:
 
         df = _load_minute_df(stock_code)
         if df is None or len(df) < 60:
-            return {"stock_code": stock_code, "up_probability": None, "note": "데이터 부족"}
+            # 로컬 파일 없으면 FinanceDataReader로 일봉 즉시 수집
+            try:
+                import FinanceDataReader as fdr
+                from datetime import timedelta
+                start = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
+                end = datetime.now().strftime("%Y-%m-%d")
+                fdr_df = fdr.DataReader(stock_code, start, end)
+                if fdr_df.empty or len(fdr_df) < 60:
+                    return {"stock_code": stock_code, "up_probability": None, "note": f"데이터 부족 ({len(fdr_df) if not fdr_df.empty else 0}일)"}
+                fdr_df = fdr_df.reset_index().rename(columns={
+                    "Date": "date", "Open": "open", "High": "high",
+                    "Low": "low", "Close": "close", "Volume": "volume",
+                })
+                df = fdr_df
+            except Exception as fe:
+                return {"stock_code": stock_code, "up_probability": None, "note": f"데이터 수집 실패: {fe}"}
 
         close = df["close"].astype(float)
         volume = df.get("volume", pd.Series(dtype=float)).astype(float)
@@ -139,6 +166,42 @@ def tool_get_ml_prediction(stock_code: str) -> dict:
             "stock_code": stock_code,
             "up_probability": round(prob, 4),
             "signal": "UP" if prob > 0.55 else "DOWN" if prob < 0.45 else "NEUTRAL",
+        }
+    except Exception as e:
+        return {"error": str(e), "stock_code": stock_code}
+
+
+def tool_search_news_sentiment(stock_code: str, stock_name: str = "") -> dict:
+    """Google News RSS로 종목 관련 최신 한국어 뉴스 헤드라인 수집"""
+    import urllib.request
+    import urllib.parse
+    import xml.etree.ElementTree as ET
+
+    query = urllib.parse.quote(f"{stock_name or stock_code} 주식")
+    url = f"https://news.google.com/rss/search?q={query}&hl=ko&gl=KR&ceid=KR:ko"
+    try:
+        req = urllib.request.Request(
+            url, headers={"User-Agent": "Mozilla/5.0 (compatible; StockBot/1.0)"}
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            root = ET.fromstring(resp.read())
+
+        headlines = []
+        for item in root.findall(".//item")[:10]:
+            title_el = item.find("title")
+            date_el = item.find("pubDate")
+            if title_el is not None and title_el.text:
+                headlines.append({
+                    "title": title_el.text,
+                    "date": date_el.text if date_el is not None else "",
+                })
+
+        return {
+            "stock_code": stock_code,
+            "stock_name": stock_name,
+            "headlines": headlines,
+            "count": len(headlines),
+            "note": "헤드라인을 읽고 긍정/부정/중립 감성을 직접 판단하세요.",
         }
     except Exception as e:
         return {"error": str(e), "stock_code": stock_code}
@@ -251,6 +314,22 @@ TOOLS = [
         },
     },
     {
+        "name": "search_news_sentiment",
+        "description": (
+            "종목 관련 최신 뉴스 헤드라인을 수집합니다. "
+            "반환된 헤드라인을 읽고 시장 감성(긍정/부정/중립)을 직접 판단하여 "
+            "매수/매도 의사결정에 반영하세요."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "stock_code": {"type": "string", "description": "종목 코드"},
+                "stock_name": {"type": "string", "description": "종목명 (검색 정확도 향상, 선택)"},
+            },
+            "required": ["stock_code"],
+        },
+    },
+    {
         "name": "place_order",
         "description": (
             "매수(BUY) 또는 매도(SELL) 주문을 실행합니다. "
@@ -283,6 +362,7 @@ TOOL_DISPATCH: dict[str, Any] = {
     "get_current_price": tool_get_current_price,
     "get_technical_indicators": tool_get_technical_indicators,
     "get_ml_prediction": tool_get_ml_prediction,
+    "search_news_sentiment": tool_search_news_sentiment,
     "get_account_balance": tool_get_account_balance,
     "get_holdings": tool_get_holdings,
     "place_order": tool_place_order,
@@ -319,27 +399,38 @@ def _build_system_prompt(budget: int | None) -> str:
 
 {budget_section}
 
-## 분석 순서
+## 분석 순서 (반드시 이 순서로)
 {balance_step}
-2. 각 종목에 대해:
-   a. get_current_price — 현재가 확인
-   b. get_technical_indicators — 기술적 지표 확인
-   c. get_ml_prediction — ML 모델 예측 확인
+2. 보유 종목 매도 점검 (get_holdings로 가져온 각 종목):
+   a. get_current_price → get_technical_indicators → get_ml_prediction
+   b. search_news_sentiment → 헤드라인 읽고 감성 판단
+   c. 매도 조건 충족 시 즉시 place_order(action="SELL")
+3. 신규 매수 후보 분석 (종목 목록의 나머지):
+   a. get_current_price → get_technical_indicators → get_ml_prediction
+   b. search_news_sentiment → 헤드라인 읽고 감성 판단
+   c. 매수 조건 충족 시 place_order(action="BUY")
 
-## 매수 조건 (모두 만족 시 매수)
-- ML 상승 확률 ≥ 0.55
-- RSI14 < 65 (과매수 아님)
-- 현재가 > MA5 (단기 상승 추세)
+## 감성 분석 반영 규칙
+- **긍정(positive)**: 다른 매수 조건 충족 시 적극 매수. 보유 중이면 유지.
+- **부정(negative)**: ML이 0.48 이상이어도 신규 매수 보류. 보유 중이면 손실률 무관하게 매도 우선 검토.
+- **중립(neutral)**: ML/RSI 기준만으로 판단.
+- 뉴스가 없거나 수집 실패 시 중립으로 처리하고 ML/RSI 기준 적용.
+
+## 매도 조건 — 보유 종목에서 하나라도 해당하면 즉시 매도
+- ML 상승 확률 < 0.45 (하락 신호)
+- RSI14 > 75 (과매수, 고점 가능성)
+- 손실률 ≤ -7% (손절)
+- 수익률 ≥ +8% (익절)
+
+## 매수 조건 — 아래 조건을 최대한 충족하는 종목 매수 (테스트 기간: 조건 완화)
+- ML 상승 확률 ≥ 0.48 (NEUTRAL 포함 허용)
+- RSI14 < 75 (극과매수만 제외)
 - 예산(또는 잔고) ≥ 현재가 × 주문수량
-
-## 매도 조건 (하나라도 만족 시 매도)
-- 보유 종목 ML 상승 확률 < 0.40
-- RSI14 > 70 (과매수)
-- 손실률 ≤ -5%
+- 위 조건을 모두 만족하는 종목 중 ML 확률이 가장 높은 종목 우선 매수
 
 ## 주의사항
 - 종목당 최대 {TRADE_QUANTITY}주 (예산 내 최적 수량 자동 계산)
-- 확신 없으면 주문하지 않음
+- 조건 충족 종목이 있으면 적극적으로 매수 실행 (테스트 기간이므로 소극적 보류 지양)
 - DRY_RUN={DRY_RUN}: {'시뮬레이션만 실행, 실제 주문 없음' if DRY_RUN else '실제 주문 실행됩니다!'}
 - 분석 근거와 최종 판단을 명확히 설명하세요
 """
@@ -565,6 +656,17 @@ def trading_loop(
                         names = df.set_index("stock_code")["name"].to_dict()
                         print(f"  후보 {len(watch_list)}개: " +
                               ", ".join(f"{c}({names.get(c,'')})" for c in watch_list))
+
+                        # 로컬 데이터 없는 신규 종목 자동 수집
+                        from collector.data_fetcher import save_minute_data
+                        new_codes = [c for c in watch_list if not list(MINUTE_DIR.glob(f"{c}_*.csv"))]
+                        if new_codes:
+                            print(f"  신규 종목 데이터 수집: {new_codes}")
+                            for code in new_codes:
+                                try:
+                                    save_minute_data(code, days=5)
+                                except Exception as ce:
+                                    print(f"    {code} 수집 실패: {ce}")
                 except Exception as e:
                     print(f"  스크리닝 실패: {e}")
                     if not watch_list:
@@ -576,6 +678,18 @@ def trading_loop(
                 print(f"[{now:%H:%M}] 후보 종목 없음, 대기 중...")
                 time.sleep(interval_min * 60)
                 continue
+
+            # 보유 종목을 watch_list에 합산 (매도 누락 방지)
+            try:
+                holdings = _get_kis().get_holdings()
+                held_codes = [h["stock_code"] for h in holdings if "stock_code" in h]
+                if held_codes:
+                    added = [c for c in held_codes if c not in watch_list]
+                    if added:
+                        print(f"  보유 종목 추가 (매도 점검): {added}")
+                    watch_list = list(dict.fromkeys(held_codes + watch_list))  # 보유 종목 우선
+            except Exception as e:
+                print(f"  보유 종목 조회 실패: {e}")
 
             # 에이전트 실행
             print(f"\n[{now:%H:%M}] 에이전트 실행 #{iteration} — {watch_list}")

@@ -360,9 +360,15 @@ class KisClient:
             },
         )
         items = data.get("output1", [])
+        def _int(v, default=0) -> int:
+            try:
+                return int(float(v))
+            except (TypeError, ValueError):
+                return default
+
         result = []
         for item in items:
-            qty = int(item.get("hldg_qty", 0))
+            qty = _int(item.get("hldg_qty", 0))
             if qty == 0:
                 continue
             result.append(
@@ -370,10 +376,10 @@ class KisClient:
                     "stock_code": item.get("pdno", ""),
                     "stock_name": item.get("prdt_name", ""),
                     "quantity": qty,
-                    "avg_price": int(item.get("pchs_avg_pric", 0)),
-                    "current_price": int(item.get("prpr", 0)),
-                    "eval_amount": int(item.get("evlu_amt", 0)),
-                    "profit_loss": int(item.get("evlu_pfls_amt", 0)),
+                    "avg_price": _int(item.get("pchs_avg_pric", 0)),
+                    "current_price": _int(item.get("prpr", 0)),
+                    "eval_amount": _int(item.get("evlu_amt", 0)),
+                    "profit_loss": _int(item.get("evlu_pfls_amt", 0)),
                     "profit_loss_rate": float(item.get("evlu_pfls_rt", 0)),
                 }
             )

@@ -62,7 +62,7 @@ def main():
     elif args.command == "loop":
         from agent import trading_loop
 
-        interval = int(os.environ.get("LOOP_INTERVAL_MIN", "30"))
+        interval = int(os.environ.get("LOOP_INTERVAL_MIN", "3"))
         screen_every = int(os.environ.get("SCREEN_EVERY_N", "4"))
         print(f"자동매매 루프 시작 (간격: {interval}분, KOSPI 재스크리닝: {screen_every}회마다)")
         trading_loop(budget=args.budget, interval_min=interval, screen_every_n=screen_every)
