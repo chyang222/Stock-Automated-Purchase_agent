@@ -116,7 +116,7 @@ PatchTST 시계열 모델 + 실시간 뉴스 감성 분석을 결합해 매수/�
  │   ├─ [보유 종목] 현재가 → 기술지표 → PatchTST → 뉴스감성 → 매도?
  │   └─ [후보 종목] 현재가 → 기술지표 → PatchTST → 뉴스감성 → 매수?
  │
- └─ 6분 대기 → 반복
+ └─ 20분 대기 → 반복
 ```
 
 ### 매매 조건
@@ -187,7 +187,7 @@ python app.py features && python app.py train                       # RandomFore
 # ── 에이전트 실행
 python app.py agent                            # 1회 실행
 python app.py agent --symbols 005930 --budget 30000
-python app.py loop                             # 장중 반복 (6분 간격)
+python app.py loop                             # 장중 반복 (20분 간격)
 python app.py loop --budget 100000
 
 # ── 추천
@@ -204,14 +204,25 @@ PATCHTST_EPOCHS=20 python app.py train-patchtst
 
 ## crontab 설정 (매일 자동 실행)
 
+이 서버의 crond는 UTC 기준으로 동작합니다. 시간은 모두 UTC로 입력해야 합니다.
+
 ```bash
 crontab -e
 ```
 
 ```
-0 9  * * 1-5 /home/dev/project/stock/start.sh >> /home/dev/project/stock/logs/cron.log 2>&1
-30 15 * * 1-5 /home/dev/project/stock/stop.sh >> /home/dev/project/stock/logs/cron.log 2>&1
+# 주식 자동매매 (UTC 기준)
+0 0 * * 1-5 /home/dev/project/stock/start.sh >> /home/dev/project/stock/logs/cron.log 2>&1
+30 6 * * 1-5 /home/dev/project/stock/stop.sh >> /home/dev/project/stock/logs/cron.log 2>&1
+# PatchTST 재학습 (23:00 KST = 14:00 UTC)
+0 14 * * 1-5 /home/dev/miniconda3/envs/stock/bin/python /home/dev/project/stock/app.py train-patchtst >> /home/dev/project/stock/logs/train_patchtst.log 2>&1
 ```
+
+| 목적 | KST | UTC (cron) |
+|------|-----|------------|
+| 장 시작 | 09:00 | `0 0 * * 1-5` |
+| 장 마감 | 15:30 | `30 6 * * 1-5` |
+| PatchTST 재학습 | 23:00 | `0 14 * * 1-5` |
 
 ```bash
 # 로그 확인
