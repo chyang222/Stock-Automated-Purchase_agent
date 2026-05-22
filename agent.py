@@ -435,8 +435,8 @@ def _build_system_prompt(budget: int | None) -> str:
 ## 매도 조건 — 보유 종목에서 하나라도 해당하면 즉시 매도
 - ML 상승 확률 < 0.45 (하락 신호)
 - RSI14 > 75 (과매수, 고점 가능성)
-- 실질 손실률 ≤ -7% (수수료 포함 손절)
-- 실질 수익률 ≥ +1.0% (수수료 0.21% 차감 후 순수익 +0.79% 이상, 익절)
+- 실질 손실률 ≤ -3% (수수료 포함 손절)
+- 실질 수익률 ≥ +5.0% (수수료 0.21% 차감 후 순수익 +4.79% 이상, 익절)
 - 뉴스 감성 부정 + 실질 수익률 > 0% → 즉시 익절
 
 ## 매수 조건 — 아래 조건을 모두 충족하는 종목만 매수
@@ -677,7 +677,8 @@ def trading_loop(
                               ", ".join(f"{c}({names.get(c,'')})" for c in watch_list))
 
                         # 로컬 데이터 없는 신규 종목 자동 수집
-                        from collector.data_fetcher import save_minute_data
+                        from collector.data_fetcher import save_minute_data, save_5m_data
+                        from models.patchtst_model import MINUTE5_DIR as _M5DIR
                         new_codes = [c for c in watch_list if not list(MINUTE_DIR.glob(f"{c}_*.csv"))]
                         if new_codes:
                             print(f"  신규 종목 데이터 수집: {new_codes}")
@@ -685,7 +686,16 @@ def trading_loop(
                                 try:
                                     save_minute_data(code, days=5)
                                 except Exception as ce:
-                                    print(f"    {code} 수집 실패: {ce}")
+                                    print(f"    {code} 1분봉 수집 실패: {ce}")
+                        # 5분봉 미보유 종목도 수집 (PatchTST 사용 가능하도록)
+                        new5_codes = [c for c in watch_list if not list(_M5DIR.glob(f"{c}_*.csv"))]
+                        if new5_codes:
+                            print(f"  5분봉 수집: {new5_codes}")
+                            for code in new5_codes:
+                                try:
+                                    save_5m_data(code, days=59)
+                                except Exception as ce:
+                                    print(f"    {code} 5분봉 수집 실패: {ce}")
                 except Exception as e:
                     print(f"  스크리닝 실패: {e}")
                     if not watch_list:

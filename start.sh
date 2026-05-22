@@ -37,7 +37,7 @@ else
 fi
 
 # -u: Python 출력 버퍼링 해제, 타임스탬프 붙여서 로그에 기록
-"$PYTHON" -u app.py loop $BUDGET_OPT 2>&1 | \
+LOOP_INTERVAL_MIN=20 "$PYTHON" -u app.py loop $BUDGET_OPT 2>&1 | \
     awk '{ print strftime("[%H:%M:%S]"), $0; fflush() }' >> "$LOG_FILE" &
 
 echo $! > "$PID_FILE"
