@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(/home/dev/miniconda3/envs/stock/bin/python -c ' *)",
+      "Bash(crontab -l)",
+      "Bash(bash stop.sh)",
+      "Bash(timedatectl)",
+      "Read(//etc/**)",
+      "Bash(/home/dev/miniconda3/envs/stock/bin/python -c \"import torch; import transformers; print\\('torch', torch.__version__\\); print\\('transformers', transformers.__version__\\)\")"
+    ]
+  }
+}

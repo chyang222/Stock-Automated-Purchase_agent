@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "allow": [
+      "Skill(claude-api)",
+      "Skill(claude-api:*)",
+      "Bash(pip install *)",
+      "Bash(python -c \"import pandas; print\\(pandas.__version__\\)\")",
+      "Bash(conda info *)",
+      "Read(//home/dev/anaconda3/**)",
+      "Bash(/home/dev/miniconda3/envs/stock/bin/pip install *)",
+      "Bash(/home/dev/miniconda3/envs/stock/bin/python -c ' *)",
+      "Bash(/home/dev/miniconda3/envs/stock/bin/python app.py agent --dry-run)",
+      "Bash(chmod +x /home/dev/project/stock/start.sh /home/dev/project/stock/stop.sh)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(timedatectl 2>/dev/null || date && echo \"---\" && cat /etc/timezone 2>/dev/null || ls -la /etc/localtime)",
+      "Read(//usr/share/zoneinfo/Asia/**)",
+      "Read(//var/log/**)",
+      "Bash(journalctl -u cron -u crond --since \"2026-05-22 00:00:00\" --until \"2026-05-22 12:20:00\" --no-pager)",
+      "Bash(journalctl -u crond --since \"2026-05-21 23:00:00\" --no-pager)",
+      "Bash(journalctl -u crond --since \"2026-05-21 00:00:00\" --no-pager)",
+      "Bash(crontab -)",
+      "Bash(journalctl -u crond --since \"2026-05-22 12:40:00\" --no-pager)",
+      "Bash(rpm -q cronie)",
+      "Bash(crond --version)",
+      "Bash(cron --version)",
+      "Bash(journalctl -u crond --since \"2026-05-22 12:39:00\" --no-pager)",
+      "Bash(journalctl -u crond -f --no-pager)",
+      "Bash(journalctl -u crond --since \"2026-05-22 12:54:00\" --no-pager)",
+      "Bash(journalctl -u crond --since \"2026-05-22 13:04:00\" --no-pager)"
+    ]
+  }
+}
